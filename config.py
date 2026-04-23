@@ -15,6 +15,6 @@ class Config:
     MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD', 'admin')
     MYSQL_DB = os.environ.get('MYSQL_DB', 'sakila')
     SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-here-change-this-in-production')
-    CONNECTION_TIMEOUT = int(os.environ.get('CONNECTION_TIMEOUT', '30'))
+    CONNECTION_TIMEOUT = int(os.environ.get('CONNECTION_TIMEOUT', '10'))
     HEALTH_CHECK_INTERVAL = int(os.environ.get('HEALTH_CHECK_INTERVAL', '10'))
 
