@@ -23,7 +23,6 @@ on:
 
 jobs:
   deploy-staging:
-    # Only run if triggered by push or a SUCCESSFUL CI workflow run
     if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: staging
@@ -34,7 +33,6 @@ jobs:
         run: |
           echo "Deploying to STAGING environment..."
           echo "IMAGE_TAG: staging-${{ github.sha }}"
-          # Simulating running the docker image with a staging tag
           docker build -t sakila-app:staging .
           echo "Staging deployment successful on port 5001"
 
@@ -46,7 +44,6 @@ jobs:
           echo "### Staging Deployment Summary 🚀" >> $GITHUB_STEP_SUMMARY
           echo "* **Environment:** Staging" >> $GITHUB_STEP_SUMMARY
           echo "* **Status:** Success" >> $GITHUB_STEP_SUMMARY
-          echo "* **Release Tag:** staging-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
 
   deploy-production:
     needs: deploy-staging
