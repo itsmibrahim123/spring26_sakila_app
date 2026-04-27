@@ -1,0 +1,51 @@
+name: Fixed CI Pipeline
+
+# FIX 1: 'branches' under push must be a list (array), not a plain scalar string.
+# Original: branches: main  →  Fixed: branches: [main]
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    # FIX 2: 'ubuntu' is not a valid runner label. Must be 'ubuntu-latest' (or a pinned version).
+    # Original: runs-on: ubuntu  →  Fixed: runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run Tests
+        run: pytest tests/ -v
+
+  build:
+    runs-on: ubuntu-latest
+    # FIX 3: The 'build' job has no 'needs' declaration, so it runs in parallel with 'test'
+    # and does not wait for tests to pass. Added needs: [test] so build only runs after tests succeed.
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      # FIX 4: Broken YAML — the step definition and 'uses' were collapsed onto one line after
+      # the previous step closing, making it invalid YAML. Each step must start on its own line
+      # under the 'steps' list with a leading '- '.
+      # Original (one line): - uses: actions/checkout@v4  - name: Build Image
+      # Fixed: split into separate list items properly.
+      - name: Build Image
+        run: docker build -t myapp .
+
+  deploy:
+    runs-on: ubuntu-latest
+    # FIX 5: 'needs: test' should be a list for consistency and correctness. More importantly,
+    # the deploy job does NOT depend on 'build', meaning a failed build would not block deployment.
+    # Fixed: needs: [test, build] so deploy only runs when BOTH test and build succeed.
+    needs: [test, build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy
+        run: echo "Deploying to production..."
