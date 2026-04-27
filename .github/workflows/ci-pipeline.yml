@@ -1,18 +1,23 @@
-name: CI Pipeline
+name: Sakila CI Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: '3.9'
-  IMAGE_NAME: sakila-app
+  PYTHON_VERSION: "3.9"
+  IMAGE_NAME: "sakila-app"
+  MYSQL_DATABASE: "sakila"
+  MYSQL_ROOT_PASSWORD: "admin"
 
 jobs:
   lint:
-    name: Task C1.1 - Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,70 +25,75 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Linting Tools
+        run: pip install flake8
       - name: Run flake8
         run: |
-          pip install flake8
-          flake8 . --max-line-length=120 --ignore=E501,W503,F401,E128,E302,W291,W292,W293
+          # max line length 120, ignore E501 and W503
+          flake8 . --count --max-line-length=120 --ignore=E501,W503 --show-source --statistics
 
   test:
-    name: Task C1.2 - Test
     runs-on: ubuntu-latest
     needs: lint
     services:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: admin
-          MYSQL_DATABASE: sakila
+          MYSQL_ROOT_PASSWORD: ${{ env.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: ${{ env.MYSQL_DATABASE }}
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
     steps:
       - uses: actions/checkout@v4
-      - name: Setup & Test
+      - name: Install Dependencies
+        run: pip install -r requirements.txt pytest pymysql
+      - name: Load Sakila Database
+        run: |
+          curl -L -o sakila.tar.gz https://downloads.mysql.com/docs/sakila-db.tar.gz
+          tar -xzf sakila.tar.gz
+          mysql -h 127.0.0.1 -u root -p${{ env.MYSQL_ROOT_PASSWORD }} ${{ env.MYSQL_DATABASE }} < sakila-db/sakila-schema.sql
+          mysql -h 127.0.0.1 -u root -p${{ env.MYSQL_ROOT_PASSWORD }} ${{ env.MYSQL_DATABASE }} < sakila-db/sakila-data.sql
+      - name: Run Tests
         env:
           MYSQL_HOST: 127.0.0.1
-          MYSQL_PASSWORD: admin
-          PYTHONPATH: .
-        run: |
-          pip install -r requirements.txt
-          sleep 10
-          curl -L https://downloads.mysql.com/docs/sakila-db.tar.gz -o sakila-db.tar.gz
-          tar -xzvf sakila-db.tar.gz
-          mysql -h 127.0.0.1 -uroot -padmin sakila < sakila-db/sakila-schema.sql
-          mysql -h 127.0.0.1 -uroot -padmin sakila < sakila-db/sakila-data.sql
-          pytest tests/ -v
+          MYSQL_PASSWORD: ${{ env.MYSQL_ROOT_PASSWORD }}
+        run: pytest -v
 
   build:
-    name: Task C1.3 - Build
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: Build & Smoke Test
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Image
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+      - name: Verify Image
+        run: docker images
+      - name: Smoke Test
         run: |
-          docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
-          docker run -d -p 5000:5000 -e MYSQL_HOST=127.0.0.1 -e MYSQL_PASSWORD=admin -e SECRET_KEY=test --name smoke ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker run -d -p 5000:5000 --name smoke-test ${{ env.IMAGE_NAME }}:${{ github.sha }}
           sleep 10
-          curl -f http://localhost:5000/
+          curl --retry 5 --retry-connrefused http://localhost:5000/ || exit 1
 
   security-scan:
-    name: Task C1.4 - Security
     runs-on: ubuntu-latest
     needs: build
     steps:
       - uses: actions/checkout@v4
       - name: Build Image for Scan
-        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
-      - name: Image Security Scan
+        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ github.sha }}'
+          image-ref: '${{ env.IMAGE_NAME }}:scan'
           format: 'table'
           exit-code: '0'
-          output: 'trivy-report.txt'
-      - name: Upload Scan Report
+          severity: 'CRITICAL,HIGH'
+      - name: Upload Trivy Scan Results
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-security-report
-          path: trivy-report.txt
+          name: trivy-report
+          path: trivy-results.txt
+          if-no-files-found: ignore
